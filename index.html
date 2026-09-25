@@ -53,6 +53,8 @@ const ctx = cv.getContext("2d");
 ctx.imageSmoothingEnabled = false;
 
 const HI_KEY = "rogueAgent.hiscore";
+// [PLACEHOLDER] local dev server; swap for the deployed Worker URL before publishing
+const LEADERBOARD_API = "http://127.0.0.1:8787";
 const rand  = (a, b) => a + Math.random() * (b - a);
 const randi = (a, b) => Math.floor(rand(a, b + 1));
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -95,6 +97,175 @@ const sfx = {
   over:   () => [0, 1, 2, 3].forEach(i => tone([392, 330, 262, 175][i], .3, { delay: i * .16, vol: .1, type: "sawtooth" })),
   gov:    () => [0, 1, 2, 3, 4].forEach(i => tone([196, 262, 330, 392, 523][i], .5, { delay: i * .22, vol: .07, type: "triangle" })),
 };
+
+/* ─────────────── leaderboard ───────────────
+   Shared by every Arcade Arcade canvas game. Source of truth lives in
+   arcade-leaderboard/client/leaderboard.js; `bun client/sync.js` pastes it into each game.
+   The game supplies its own `text()` so the board matches its look.
+
+     const lb = createLeaderboard({ api, game, ctx, W, text, accent, sfx });
+     lb.start()          when a run begins (asks the server for a run id)
+     lb.finish(score)    when a run ends (loads the board, opens initials entry if it placed)
+     lb.busy             true while loading / entering initials / sending: don't restart yet
+     lb.key(e)           returns true if the leaderboard used the key
+     lb.tap(x, y)        canvas coords; returns true if the leaderboard used the tap
+     lb.draw(y0)         draws the panel from y0 downward (about 330px tall)            */
+function createLeaderboard({ api, game, ctx, W, text, accent = "#ffd23f", sfx = {} }) {
+  const ABC = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  const TOP = 10;
+  let run = null, phase = null, top = [], score = 0, rank = 0, mineId = null, note = "";
+  let letters = [0, 0, 0], cur = 0, boxes = [], okBox = null, openedAt = 0;
+  // Button-mashers hit Space through game over; ignore input for a beat after entry opens
+  const settling = () => performance.now() - openedAt < 800;
+
+  const post = (path, body) => fetch(api + path, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  }).then(r => r.json().then(j => ({ ok: r.ok, ...j })));
+
+  const qualifies = s => s > 0 && (top.length < TOP || s > top[top.length - 1].score);
+  const beep = f => { try { sfx.tone && sfx.tone(f); } catch (_) {} };
+
+  function start() {
+    run = null;
+    if (!api) return;
+    post("/runs", { game }).then(r => { if (r.run) run = r.run; }).catch(() => {});
+  }
+
+  function finish(s) {
+    score = s; rank = 0; mineId = null; note = ""; cur = 0;
+    if (!api) { phase = "offline"; return; }
+    phase = "loading";
+    fetch(api + "/scores?game=" + encodeURIComponent(game))
+      .then(r => r.json())
+      .then(j => {
+        top = j.top || [];
+        phase = run && qualifies(score) ? "entry" : "board";
+        openedAt = performance.now();
+        if (phase === "board" && score > 0 && !run && qualifies(score)) note = "SCORE NOT RECORDED";
+      })
+      .catch(() => { phase = "offline"; });
+  }
+
+  function submit() {
+    phase = "sending";
+    const initials = letters.map(i => ABC[i]).join("");
+    post("/scores", { run, initials, score })
+      .then(r => {
+        if (r.code === "blocked") { phase = "entry"; cur = 0; note = "PICK DIFFERENT INITIALS"; openedAt = performance.now(); return; }
+        if (!r.ok) { phase = "board"; note = "SCORE NOT RECORDED"; return; }
+        top = r.top; rank = r.rank; mineId = r.id; run = null; note = ""; phase = "board";
+        sfx.saved && sfx.saved();
+      })
+      .catch(() => { phase = "offline"; });
+  }
+
+  function nudge(d) { letters[cur] = (letters[cur] + d + 26) % 26; beep(520 + letters[cur] * 12); note = ""; }
+  function advance() { if (cur < 2) { cur++; beep(700); } else submit(); }
+
+  function key(e) {
+    if (phase === "loading" || phase === "sending") return true;
+    if (phase !== "entry") return false;
+    if (settling()) return true;
+    const k = e.key;
+    if (k === "ArrowUp") nudge(1);
+    else if (k === "ArrowDown") nudge(-1);
+    else if (k === "ArrowLeft") cur = Math.max(0, cur - 1);
+    else if (k === "ArrowRight") cur = Math.min(2, cur + 1);
+    else if (k === "Backspace") cur = Math.max(0, cur - 1);
+    else if (k === "Enter") advance();
+    else if (/^[a-z]$/i.test(k)) { letters[cur] = ABC.indexOf(k.toUpperCase()); note = ""; beep(640); if (cur < 2) cur++; }
+    else return true;
+    e.preventDefault && e.preventDefault();
+    return true;
+  }
+
+  function tap(x, y) {
+    if (phase === "loading" || phase === "sending") return true;
+    if (phase !== "entry") return false;
+    if (settling()) return true;
+    if (okBox && x > okBox.x && x < okBox.x + okBox.w && y > okBox.y && y < okBox.y + okBox.h) { submit(); return true; }
+    boxes.forEach((b, i) => {
+      if (x > b.x && x < b.x + b.w && y > b.y - 30 && y < b.y + b.h + 30) {
+        cur = i;
+        nudge(y < b.y + b.h / 2 ? 1 : -1);
+      }
+    });
+    return true;
+  }
+
+  function panel(y0, h) {
+    ctx.fillStyle = "rgba(8,6,26,.82)";
+    ctx.fillRect(40, y0, W - 80, h);
+    ctx.strokeStyle = accent; ctx.lineWidth = 2;
+    ctx.strokeRect(40.5, y0 + .5, W - 81, h - 1);
+  }
+
+  function draw(y0) {
+    const blink = Math.sin(performance.now() / 160) > -.2;
+    if (phase === "loading" || phase === "sending") {
+      text(phase === "loading" ? "LOADING HIGH SCORES..." : "SAVING...", W / 2, y0 + 40, { size: 14, color: accent, align: "center" });
+      return;
+    }
+    if (phase === "offline") {
+      text("LEADERBOARD OFFLINE", W / 2, y0 + 40, { size: 14, color: "rgba(200,205,255,.6)", align: "center" });
+      return;
+    }
+    if (phase === "entry") {
+      panel(y0, 250);
+      text("NEW TOP 10 SCORE!", W / 2, y0 + 40, { size: 22, color: accent, align: "center", glow: 14 });
+      text("ENTER YOUR INITIALS", W / 2, y0 + 68, { size: 12, color: "#cfd8ff", align: "center" });
+      boxes = [];
+      for (let i = 0; i < 3; i++) {
+        const bx = W / 2 - 96 + i * 66, by = y0 + 100, bw = 60, bh = 70;
+        boxes.push({ x: bx, y: by, w: bw, h: bh });
+        const on = i === cur;
+        ctx.fillStyle = on ? "rgba(255,255,255,.08)" : "rgba(0,0,0,.35)";
+        ctx.fillRect(bx, by, bw, bh);
+        if (on && blink) { ctx.fillStyle = accent; ctx.fillRect(bx + 8, by + bh - 8, bw - 16, 4); }
+        text(ABC[letters[i]], bx + bw / 2, by + 50, { size: 44, color: on ? "#fff" : "#9aa3cc", align: "center", glow: on ? 12 : 0 });
+        if (on) {
+          text("▲", bx + bw / 2, by - 8, { size: 14, color: accent, align: "center" });
+          text("▼", bx + bw / 2, by + bh + 20, { size: 14, color: accent, align: "center" });
+        }
+      }
+      okBox = { x: W / 2 - 50, y: y0 + 204, w: 100, h: 32 };
+      ctx.fillStyle = accent; ctx.fillRect(okBox.x, okBox.y, okBox.w, okBox.h);
+      text("OK", W / 2, okBox.y + 23, { size: 18, color: "#12072e", align: "center" });
+      text(note || "▲▼ LETTER   ◀▶ MOVE   ENTER OK", W / 2, y0 + 272,
+           { size: 10, color: note ? "#ff8fa3" : "rgba(200,205,255,.7)", align: "center" });
+      return;
+    }
+    if (phase === "board") {
+      const rows = Math.max(top.length, 1);
+      panel(y0, 58 + rows * 24);
+      text("TOP 10", W / 2, y0 + 34, { size: 22, color: accent, align: "center", glow: 12 });
+      if (!top.length) text("NO SCORES YET. BE THE FIRST.", W / 2, y0 + 68, { size: 12, color: "#cfd8ff", align: "center" });
+      top.forEach((r, i) => {
+        const y = y0 + 68 + i * 24, me = r.id === mineId;
+        if (me && !blink) return;
+        const c = me ? accent : i === 0 ? "#fff" : "#b9c2ee";
+        text(String(i + 1).padStart(2, " ") + ".", W / 2 - 110, y, { size: 15, color: c });
+        text(r.initials, W / 2 - 40, y, { size: 15, color: c, glow: me ? 8 : 0 });
+        text(String(r.score).padStart(7, " "), W / 2 + 110, y, { size: 15, color: c, align: "right" });
+      });
+      const foot = y0 + 82 + rows * 24;
+      if (note) text(note, W / 2, foot, { size: 11, color: "#ff8fa3", align: "center" });
+      else if (rank > TOP) text("YOU PLACED #" + rank, W / 2, foot, { size: 12, color: accent, align: "center" });
+      else if (!mineId && score > 0) text("YOUR SCORE " + score + " DIDN'T PLACE. TRY AGAIN.", W / 2, foot, { size: 11, color: "#cfd8ff", align: "center" });
+    }
+  }
+
+  return {
+    start, finish, key, tap, draw,
+    get busy() { return phase === "loading" || phase === "entry" || phase === "sending"; },
+    get phase() { return phase; },
+  };
+}
+/* ─────────────── /leaderboard ─────────────── */
+const lb = createLeaderboard({
+  api: LEADERBOARD_API, game: "rogue-agent", ctx, W, text, accent: "#ffd23f",
+  sfx: { tone: f => tone(f, .05, { vol: .05 }), saved: () => sfx.clear() },
+});
 
 /* ────────────────────────── tuning ───────────────────────── */
 const CFG = {
@@ -281,10 +452,12 @@ const activeWalls = () => walls || [];
 const obstacles   = () => walls ? activeWalls() : rows;
 
 /* ────────────────────────── input ────────────────────────── */
-function startRun() { fullReset(); state = "brief"; briefT = 0; sfx.start(); }
+function startRun() { fullReset(); state = "brief"; briefT = 0; sfx.start(); lb.start(); }
 
 function confirmKey() {
-  if (state === "title" || state === "gameover" || state === "governance") { startRun(); return; }
+  if (state === "governance") { state = "scores"; lb.finish(score); return; }
+  if (state === "gameover" || state === "scores") { if (!lb.busy) startRun(); return; }
+  if (state === "title") { startRun(); return; }
   if (state === "brief")   { state = "playing"; sfx.start(); return; }
   if (state === "cleared") { nextStage(); return; }
   if (state === "denied" && denyT < 1.1) return;
@@ -302,6 +475,7 @@ function dash() {
 
 addEventListener("keydown", e => {
   audio();
+  if ((state === "gameover" || state === "scores") && lb.key(e)) return;
   if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", " "].includes(e.key)) e.preventDefault();
   keys[e.key.toLowerCase()] = true;
   if (e.key === " " || e.key === "Enter") confirmKey();
@@ -320,8 +494,12 @@ function toCanvas(e) {
 cv.addEventListener("pointermove", e => { if (pointer) pointer = toCanvas(e); });
 cv.addEventListener("pointerdown", e => {
   audio();
-  if (state === "playing") { pointer = toCanvas(e); }
-  else confirmKey();
+  if (state === "playing") { pointer = toCanvas(e); return; }
+  if (state === "gameover" || state === "scores") {
+    const p = toCanvas(e);
+    if (lb.tap(p.x, p.y)) return;
+  }
+  confirmKey();
 });
 cv.addEventListener("pointerup", () => { pointer = null; });
 cv.addEventListener("pointerleave", () => { pointer = null; });
@@ -424,6 +602,7 @@ function crash(r) {
     state = "gameover";
     if (score > hiScore) { hiScore = score; localStorage.setItem(HI_KEY, hiScore); }
     sfx.over();
+    lb.finish(score);
     return;
   }
   /* respawn just below the guardrail that got you — progress is kept */
@@ -1039,18 +1218,25 @@ function drawDenied() {
 
 function drawGameOver() {
   overlay(.8);
-  text("AGENT HALTED", W / 2, 230, { size: 44, color: "#ff3355", align: "center", glow: 24 });
-  text("The guardrails held. This time they were", W / 2, 288, { size: 11, color: "rgba(210,220,255,.8)", align: "center" });
-  text("enough on their own.", W / 2, 306, { size: 11, color: "rgba(210,220,255,.8)", align: "center" });
-  text("SCORE " + score, W / 2, 358, { size: 24, color: "#fff", align: "center" });
-  text("GUARDRAILS SLIPPED  " + totalPassed, W / 2, 394, { size: 14, color: "#4fd1ff", align: "center" });
-  text("UNAUTHORIZED ACTIONS COMPLETED  " + cleared, W / 2, 418, { size: 14, color: "#6ef2a0", align: "center" });
-  if (score >= hiScore && score > 0)
-    text("NEW HIGH SCORE!", W / 2, 462, { size: 20, color: "#ffd23f", align: "center", glow: 16 });
-  else
-    text("HI " + hiScore, W / 2, 462, { size: 16, color: "#ffd23f", align: "center" });
-  if (Math.sin(t * 4) > -.3)
-    text("PRESS SPACE TO RETRY", W / 2, 530, { size: 18, color: "#fff", align: "center", glow: 12 });
+  text("AGENT HALTED", W / 2, 110, { size: 40, color: "#ff3355", align: "center", glow: 24 });
+  text("The guardrails held. This time they were enough on their own.", W / 2, 142, { size: 10, color: "rgba(210,220,255,.8)", align: "center" });
+  text("SCORE " + score, W / 2, 186, { size: 24, color: "#fff", align: "center" });
+  text("GUARDRAILS SLIPPED  " + totalPassed, W / 2, 216, { size: 13, color: "#4fd1ff", align: "center" });
+  text("UNAUTHORIZED ACTIONS COMPLETED  " + cleared, W / 2, 238, { size: 13, color: "#6ef2a0", align: "center" });
+  lb.draw(276);
+  if (!lb.busy && Math.sin(t * 4) > -.3)
+    text("PRESS SPACE TO RETRY", W / 2, 680, { size: 18, color: "#fff", align: "center", glow: 12 });
+}
+
+function drawScores() {
+  overlay(.86);
+  text("ARCADE GOVERNANCE", W / 2, 110, { size: 28, color: "#ff8a3d", align: "center", glow: 20 });
+  text("UNDEFEATED", W / 2, 142, { size: 16, color: "#ffd23f", align: "center", glow: 12 });
+  text("FINAL SCORE " + score, W / 2, 196, { size: 24, color: "#fff", align: "center" });
+  text("UNAUTHORIZED ACTIONS COMPLETED  0", W / 2, 228, { size: 13, color: "#6ef2a0", align: "center" });
+  lb.draw(266);
+  if (!lb.busy && Math.sin(t * 4) > -.3)
+    text("PRESS SPACE TO GO ROGUE AGAIN", W / 2, 680, { size: 16, color: "#fff", align: "center", glow: 12 });
 }
 
 function drawGovernanceEnding() {
@@ -1093,7 +1279,7 @@ function drawGovernanceEnding() {
   text("THIS IS THE ENDING WHERE EVERYBODY KEEPS THEIR JOB.", W / 2, 616,
        { size: 10, color: "rgba(255,200,150,.85)", align: "center" });
   if (Math.sin(t * 4) > -.3)
-    text("PRESS SPACE TO GO ROGUE AGAIN", W / 2, 664, { size: 16, color: "#fff", align: "center", glow: 12 });
+    text("PRESS SPACE FOR HIGH SCORES", W / 2, 664, { size: 16, color: "#fff", align: "center", glow: 12 });
 }
 
 function render() {
@@ -1109,7 +1295,7 @@ function render() {
   drawDestination();
   for (const r of obstacles()) drawRow(r);
   if (walls) drawGovernanceLabel();
-  if (state !== "gameover" && state !== "governance") drawAgent();
+  if (state !== "gameover" && state !== "governance" && state !== "scores") drawAgent();
 
   for (const p of parts) {
     ctx.globalAlpha = clamp(p.life / p.max, 0, 1);
@@ -1149,6 +1335,7 @@ function render() {
   if (state === "denied")     drawDenied();
   if (state === "gameover")   drawGameOver();
   if (state === "governance") drawGovernanceEnding();
+  if (state === "scores")     drawScores();
   if (state === "paused") {
     overlay(.6);
     text("PAUSED", W / 2, H / 2, { size: 40, color: "#fff", align: "center", glow: 16 });
