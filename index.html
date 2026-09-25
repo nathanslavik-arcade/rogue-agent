@@ -462,12 +462,12 @@ function askQuit() { state = "quit"; keys = Object.create(null); tone(330, .08, 
 function resumeFromQuit() { state = "playing"; last = performance.now(); }
 function quitKey(e) {
   const k = e.key.toLowerCase();
-  if (k === "y") { quitToTitle(); return true; }
+  if (k === "y") { quitToArcade(); return true; }
   if (k === "n" || k === "escape") { resumeFromQuit(); return true; }
   return true;   // swallow everything else while the dialog is up
 }
 function quitTap(p) {
-  if (inBox(p, QUIT_Y)) quitToTitle();
+  if (inBox(p, QUIT_Y)) quitToArcade();
   else if (inBox(p, QUIT_N)) resumeFromQuit();
 }
 function drawQuit() {
@@ -478,9 +478,12 @@ function drawQuit() {
     ctx.strokeStyle = c; ctx.lineWidth = 2; ctx.strokeRect(b.x + .5, b.y + .5, b.w - 1, b.h - 1);
     text(label, b.x + b.w / 2, b.y + 33, { size: 26, color: c, align: "center", glow: 10 });
   }
-  text("Y  QUIT TO TITLE      N  KEEP PLAYING", W / 2, H / 2 + 84, { size: 11, color: "rgba(200,205,255,.75)", align: "center" });
+  text("Y  BACK TO THE ARCADE      N  KEEP PLAYING", W / 2, H / 2 + 84, { size: 11, color: "rgba(200,205,255,.75)", align: "center" });
 }
-function quitToTitle() { fullReset(); pointer = null; state = "title"; }
+// Quit sends players back to The Arcade Arcade. Relative, so it works on GitHub Pages
+// (/<game>/ -> /arcade-arcade/) and on the local dev server. #games skips the coin.
+const ARCADE_URL = "../arcade-arcade/#games";
+function quitToArcade() { location.href = ARCADE_URL; }
 
 /* Touch players dash with an on-screen button; keyboard players use Space */
 const DASH_BTN = { x: W - 104, y: H - 150, w: 80, h: 80 };
