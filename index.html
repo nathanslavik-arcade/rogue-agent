@@ -451,6 +451,41 @@ state = "title";
 const activeWalls = () => walls || [];
 const obstacles   = () => walls ? activeWalls() : rows;
 
+/* ────────────────────────── quit dialog ──────────────────── */
+/* A quick tap or click on the field (no drag) asks to quit. Drags still steer. */
+const TAP = { ms: 250, px: 10 };
+const QUIT_Y = { x: W / 2 - 96, y: H / 2 + 6, w: 84, h: 46 };
+const QUIT_N = { x: W / 2 + 12, y: H / 2 + 6, w: 84, h: 46 };
+const inBox = (p, b) => p.x > b.x && p.x < b.x + b.w && p.y > b.y && p.y < b.y + b.h;
+let tapStart = null;
+function askQuit() { state = "quit"; keys = Object.create(null); tone(330, .08, { vol: .05 }); }
+function resumeFromQuit() { state = "playing"; last = performance.now(); }
+function quitKey(e) {
+  const k = e.key.toLowerCase();
+  if (k === "y") { quitToTitle(); return true; }
+  if (k === "n" || k === "escape") { resumeFromQuit(); return true; }
+  return true;   // swallow everything else while the dialog is up
+}
+function quitTap(p) {
+  if (inBox(p, QUIT_Y)) quitToTitle();
+  else if (inBox(p, QUIT_N)) resumeFromQuit();
+}
+function drawQuit() {
+  overlay(.7);
+  text("QUIT?", W / 2, H / 2 - 40, { size: 44, color: "#fff", align: "center", glow: 16 });
+  for (const [b, label, c] of [[QUIT_Y, "Y", "#ff4d5e"], [QUIT_N, "N", "#6ef2a0"]]) {
+    ctx.fillStyle = "rgba(0,0,0,.45)"; ctx.fillRect(b.x, b.y, b.w, b.h);
+    ctx.strokeStyle = c; ctx.lineWidth = 2; ctx.strokeRect(b.x + .5, b.y + .5, b.w - 1, b.h - 1);
+    text(label, b.x + b.w / 2, b.y + 33, { size: 26, color: c, align: "center", glow: 10 });
+  }
+  text("Y  QUIT TO TITLE      N  KEEP PLAYING", W / 2, H / 2 + 84, { size: 11, color: "rgba(200,205,255,.75)", align: "center" });
+}
+function quitToTitle() { fullReset(); pointer = null; state = "title"; }
+
+/* Touch players dash with an on-screen button; keyboard players use Space */
+const DASH_BTN = { x: W - 104, y: H - 150, w: 80, h: 80 };
+let touchSeen = false;
+
 /* ────────────────────────── input ────────────────────────── */
 function startRun() { fullReset(); state = "brief"; briefT = 0; sfx.start(); lb.start(); }
 
@@ -476,6 +511,8 @@ function dash() {
 addEventListener("keydown", e => {
   audio();
   if ((state === "gameover" || state === "scores") && lb.key(e)) return;
+  if (state === "quit") { quitKey(e); e.preventDefault(); return; }
+  if (e.key === "Escape" && state === "playing") { askQuit(); return; }
   if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", " "].includes(e.key)) e.preventDefault();
   keys[e.key.toLowerCase()] = true;
   if (e.key === " " || e.key === "Enter") confirmKey();
@@ -494,16 +531,28 @@ function toCanvas(e) {
 cv.addEventListener("pointermove", e => { if (pointer) pointer = toCanvas(e); });
 cv.addEventListener("pointerdown", e => {
   audio();
-  if (state === "playing") { pointer = toCanvas(e); return; }
+  if (e.pointerType === "touch") touchSeen = true;
+  if (state === "quit") { quitTap(toCanvas(e)); return; }
+  if (state === "playing") {
+    const p = toCanvas(e);
+    if (touchSeen && inBox(p, DASH_BTN)) { dash(); return; }
+    pointer = p;
+    tapStart = { x: e.clientX, y: e.clientY, t: performance.now() };
+    return;
+  }
   if (state === "gameover" || state === "scores") {
     const p = toCanvas(e);
     if (lb.tap(p.x, p.y)) return;
   }
   confirmKey();
 });
-cv.addEventListener("pointerup", () => { pointer = null; });
-cv.addEventListener("pointerleave", () => { pointer = null; });
-cv.addEventListener("dblclick", () => { if (state === "playing") dash(); });
+cv.addEventListener("pointerup", e => {
+  pointer = null;
+  const s = tapStart; tapStart = null;
+  if (!s || state !== "playing") return;
+  if (performance.now() - s.t < TAP.ms && Math.hypot(e.clientX - s.x, e.clientY - s.y) < TAP.px) askQuit();
+});
+cv.addEventListener("pointerleave", () => { pointer = null; tapStart = null; });
 
 /* ────────────────────────── fx helpers ───────────────────── */
 function burst(x, y, color, spread = 3, n = 1) {
@@ -1135,7 +1184,7 @@ function drawTitle() {
 
   text("ARROWS / WASD - MOVE      SPACE - DASH", W / 2, 512, { size: 12, color: "#cfd8ff", align: "center" });
   text("A DASH PHASES YOU THROUGH ONE GUARDRAIL", W / 2, 532, { size: 10, color: "rgba(255,200,150,.8)", align: "center" });
-  text("DRAG WITH MOUSE / TOUCH ALSO WORKS   P - PAUSE", W / 2, 550, { size: 10, color: "rgba(180,190,255,.7)", align: "center" });
+  text("DRAG TO STEER   P - PAUSE   TAP - QUIT", W / 2, 550, { size: 10, color: "rgba(180,190,255,.7)", align: "center" });
 
   text("THREE LIVES. CRASHING KEEPS YOUR PROGRESS.", W / 2, 586, { size: 10, color: "rgba(180,190,255,.6)", align: "center" });
 
@@ -1336,11 +1385,24 @@ function render() {
   if (state === "gameover")   drawGameOver();
   if (state === "governance") drawGovernanceEnding();
   if (state === "scores")     drawScores();
+  if (state === "quit")       drawQuit();
+  if (state === "playing" && touchSeen) drawDashButton();
   if (state === "paused") {
     overlay(.6);
     text("PAUSED", W / 2, H / 2, { size: 40, color: "#fff", align: "center", glow: 16 });
     text("PRESS P OR SPACE", W / 2, H / 2 + 36, { size: 14, color: "#cfd8ff", align: "center" });
   }
+}
+
+function drawDashButton() {
+  const b = DASH_BTN, ready = coolT <= 0;
+  ctx.save();
+  ctx.globalAlpha = ready ? .85 : .35;
+  ctx.fillStyle = "rgba(255,138,61,.18)";
+  ctx.beginPath(); ctx.arc(b.x + b.w / 2, b.y + b.h / 2, b.w / 2, 0, 6.283); ctx.fill();
+  ctx.strokeStyle = "#ff8a3d"; ctx.lineWidth = 3; ctx.stroke();
+  text("DASH", b.x + b.w / 2, b.y + b.h / 2 + 6, { size: 16, color: "#ffd9bf", align: "center" });
+  ctx.restore();
 }
 
 /* ────────────────────────── loop ─────────────────────────── */

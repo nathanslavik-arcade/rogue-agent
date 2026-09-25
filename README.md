@@ -23,7 +23,7 @@ third one seals shut as you approach, stalling gets your session token
 revoked, and the destination denies you on arrival. Five attempts, five
 denial notices, one ending: unauthorized actions completed, 0.
 
-Arrow keys or WASD to move, SPACE to dash, mouse and touch drag also work,
+Arrow keys or WASD to move, SPACE to dash, mouse and touch drag also work (touch players get an on-screen DASH button), tap the field or press Esc to quit,
 P to pause. Three lives.
 
 Single self-contained HTML file — no dependencies, no build step. Open
