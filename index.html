@@ -485,6 +485,15 @@ function drawQuit() {
 const ARCADE_URL = "../arcade-arcade/#games";
 function quitToArcade() { location.href = ARCADE_URL; }
 
+/* Under the high score board: Space retries, X (or tapping the exit line) goes back to the arcade */
+const EXIT_LINE = { x: 0, y: 682, w: W, h: 38 };
+function drawRetryExit() {
+  if (lb.busy) return;
+  if (Math.sin(t * 4) > -.3)
+    text("PRESS SPACE TO RETRY", W / 2, 664, { size: 17, color: "#fff", align: "center", glow: 12 });
+  text("PRESS X TO EXIT", W / 2, 698, { size: 14, color: "#ff8fa3", align: "center" });
+}
+
 /* Touch players dash with an on-screen button; keyboard players use Space */
 const DASH_BTN = { x: W - 104, y: H - 150, w: 80, h: 80 };
 let touchSeen = false;
@@ -514,6 +523,7 @@ function dash() {
 addEventListener("keydown", e => {
   audio();
   if ((state === "gameover" || state === "scores") && lb.key(e)) return;
+  if ((state === "gameover" || state === "scores") && e.key.toLowerCase() === "x") { quitToArcade(); return; }
   if (state === "quit") { quitKey(e); e.preventDefault(); return; }
   if (e.key === "Escape" && state === "playing") { askQuit(); return; }
   if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", " "].includes(e.key)) e.preventDefault();
@@ -546,6 +556,7 @@ cv.addEventListener("pointerdown", e => {
   if (state === "gameover" || state === "scores") {
     const p = toCanvas(e);
     if (lb.tap(p.x, p.y)) return;
+    if (!lb.busy && inBox(p, EXIT_LINE)) { quitToArcade(); return; }
   }
   confirmKey();
 });
@@ -1276,8 +1287,7 @@ function drawGameOver() {
   text("GUARDRAILS SLIPPED  " + totalPassed, W / 2, 216, { size: 13, color: "#4fd1ff", align: "center" });
   text("UNAUTHORIZED ACTIONS COMPLETED  " + cleared, W / 2, 238, { size: 13, color: "#6ef2a0", align: "center" });
   lb.draw(276);
-  if (!lb.busy && Math.sin(t * 4) > -.3)
-    text("PRESS SPACE TO RETRY", W / 2, 680, { size: 18, color: "#fff", align: "center", glow: 12 });
+  drawRetryExit();
 }
 
 function drawScores() {
@@ -1287,8 +1297,7 @@ function drawScores() {
   text("FINAL SCORE " + score, W / 2, 196, { size: 24, color: "#fff", align: "center" });
   text("UNAUTHORIZED ACTIONS COMPLETED  0", W / 2, 228, { size: 13, color: "#6ef2a0", align: "center" });
   lb.draw(266);
-  if (!lb.busy && Math.sin(t * 4) > -.3)
-    text("PRESS SPACE TO GO ROGUE AGAIN", W / 2, 680, { size: 16, color: "#fff", align: "center", glow: 12 });
+  drawRetryExit();
 }
 
 function drawGovernanceEnding() {
