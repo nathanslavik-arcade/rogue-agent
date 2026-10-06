@@ -3,7 +3,23 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
-<title>ROGUE AGENT</title>
+<title>Rogue Agent: Retro AI Agent Game | Arcade</title>
+<meta name="description" content="You're the AI agent. Slip past every guardrail to three unauthorized destinations, then meet the final boss. A retro game from Arcade.">
+<link rel="canonical" href="https://www.arcade.dev/arcade/rogue-agent/">
+<link rel="icon" href="https://www.arcade.dev/favicon.svg" type="image/svg+xml">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://www.arcade.dev/arcade/rogue-agent/">
+<meta property="og:title" content="Rogue Agent: Retro AI Agent Game | Arcade">
+<meta property="og:description" content="You're the AI agent. Slip past every guardrail to three unauthorized destinations, then meet the final boss. A retro game from Arcade.">
+<meta property="og:image" content="https://www.arcade.dev/arcade/share.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://www.arcade.dev/arcade/share.jpg">
+<!-- analytics: same CookieYes consent + Google Tag Manager as the rest of arcade.dev -->
+<script id="cookieyes" type="text/javascript" src="https://cdn-cookieyes.com/client_data/eb53c5ac4fc2ca98f60a749a1fa130fc/script.js"></script>
+<script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src='https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);})(window,document,'script','dataLayer','GTM-TVS58H5F');</script>
+<!-- /analytics -->
 <style>
   :root { --bezel:#15121f; --glow:#ff8a3d; }
   * { box-sizing:border-box; margin:0; padding:0; }
@@ -35,9 +51,11 @@
     text-align:center; letter-spacing:.42em; font-size:11px; font-weight:bold;
     color:#7f6fb8; padding:0 0 10px 2px; text-transform:uppercase;
   }
+  .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 </style>
 </head>
 <body>
+<h1 class="sr-only">Rogue Agent</h1>
 <div id="cabinet">
   <div id="marquee">Rogue Agent</div>
   <div id="wrap"><canvas id="game" width="480" height="720"></canvas></div>
@@ -54,7 +72,7 @@ ctx.imageSmoothingEnabled = false;
 
 const HI_KEY = "rogueAgent.hiscore";
 // [PLACEHOLDER] local dev server; swap for the deployed Worker URL before publishing
-const LEADERBOARD_API = "http://127.0.0.1:8787";
+const LEADERBOARD_API = "/api/arcade-leaderboard";
 const rand  = (a, b) => a + Math.random() * (b - a);
 const randi = (a, b) => Math.floor(rand(a, b + 1));
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -485,7 +503,7 @@ function drawQuit() {
 }
 // Quit sends players back to The Arcade Arcade. Relative, so it works on GitHub Pages
 // (/<game>/ -> /arcade-arcade/) and on the local dev server. #games skips the coin.
-const ARCADE_URL = "../arcade-arcade/#games";
+const ARCADE_URL = "../#games";
 function quitToArcade() { location.href = ARCADE_URL; }
 
 /* Under the high score board: Space retries, X (or tapping the exit line) goes back to the arcade */
